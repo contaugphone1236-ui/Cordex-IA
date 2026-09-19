@@ -1,0 +1,12 @@
+{
+  "name": "cordex-ai",
+  "version": "1.0.0",
+  "description": "Cordex AI Gateway",
+  "main": "cordex-server.js",
+  "scripts": {
+    "start": "node cordex-server.js"
+  },
+  "engines": {
+    "node": ">=20 <26"
+  }
+}
