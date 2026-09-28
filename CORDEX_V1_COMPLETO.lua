@@ -451,8 +451,24 @@ end
 
 local function FindPickupPrompt(Egg)
     if not Egg then return nil end
-    local Prompt=Egg:FindFirstChildWhichIsA("ProximityPrompt",true)
-    return Prompt
+    return Egg:FindFirstChildWhichIsA("ProximityPrompt",true)
+end
+
+local function GetPickupPosition(Egg)
+    local Prompt=FindPickupPrompt(Egg)
+    if not Prompt then return nil end
+
+    local Parent=Prompt.Parent
+    if Parent and Parent:IsA("Attachment") then
+        return Parent.WorldPosition
+    end
+    if Parent and Parent:IsA("BasePart") then
+        return Parent.Position
+    end
+
+    local Part=Prompt:FindFirstAncestorWhichIsA("BasePart")
+    if Part then return Part.Position end
+    return nil
 end
 
 local function CollectEgg(EggData)
@@ -506,31 +522,55 @@ local CurrentStage="Idle"
 local function Scanner() return Context.EggScanner end
 
 local function MoveToPosition(Position)
-    if not Position then return false end
-    local Movement=Context.GuidedMovement
-    if Movement and type(Movement.MoveToPosition)=="function" then
-        local ok,result=pcall(function() return Movement.MoveToPosition(Position) end)
-        if ok then return result~=false end
+    if typeof(Position)~="Vector3" then return false end
+
+    local Mode=Context.State.ModoMovimento or "TeleGuiado"
+    if Mode=="TeleGuiado" then
+        local Movement=Context.GuidedMovement
+        if Movement and type(Movement.MoveToPosition)=="function" then
+            local ok,result=pcall(function()
+                return Movement.MoveToPosition(Position)
+            end)
+            if ok then return result==true end
+        end
     end
 
+    -- Teleporte não usa CFrame/teleporte forçado.
+    -- Aqui mantemos movimentação normal do Humanoid para evitar bypass de jogo.
     local Character=LocalPlayer.Character
     local Humanoid=Character and Character:FindFirstChildOfClass("Humanoid")
-    if not Humanoid then return false end
-    Humanoid:MoveTo(Position)
+    local Root=Character and Character:FindFirstChild("HumanoidRootPart")
+    if not Humanoid or not Root then return false end
 
+    local OldWalkSpeed=Humanoid.WalkSpeed
+    if Mode=="Teleporte" then
+        Humanoid.WalkSpeed=math.clamp((tonumber(Context.State.FarmSpeed) or 50)/5,16,100)
+    end
+
+    local Destination=Position+Vector3.new(0,3,0)
     local Start=os.clock()
-    while Running and os.clock()-Start<8 do
-        local Root=Character:FindFirstChild("HumanoidRootPart")
-        if Root and (Root.Position-Position).Magnitude<=5 then return true end
+    while Running and os.clock()-Start<12 do
+        Humanoid:MoveTo(Destination)
+        Root=Character:FindFirstChild("HumanoidRootPart")
+        if Root and (Root.Position-Destination).Magnitude<=4 then
+            Humanoid.WalkSpeed=OldWalkSpeed
+            return true
+        end
         task.wait(0.05)
     end
+
+    Humanoid.WalkSpeed=OldWalkSpeed
     return false
 end
 
 local function TeleportToEgg(Target)
-    if not Target or not Target.Position then return false end
+    if not Target or not Target.Object then return false end
     CurrentStage="MovingToEgg"
-    return MoveToPosition(Target.Position+Vector3.new(0,3,0))
+
+    local ScannerAPI=Scanner()
+    local Destination=ScannerAPI and ScannerAPI.GetPickupPosition and ScannerAPI.GetPickupPosition(Target.Object)
+    Destination=Destination or Target.Position
+    return MoveToPosition(Destination)
 end
 
 local function GetRanch()
@@ -556,7 +596,15 @@ end
 local function WaitForEggToDisappear(Target,Timeout)
     local Start=os.clock()
     while os.clock()-Start<Timeout do
-        if not Target or not Target.Object or not Target.Object.Parent then return true end
+        if not Target or not Target.Object or not Target.Object.Parent then
+            return true
+        end
+
+        local Prompt=Target.Object:FindFirstChildWhichIsA("ProximityPrompt",true)
+        if not Prompt or Prompt.Enabled==false then
+            return true
+        end
+
         task.wait(0.1)
     end
     return false
@@ -565,11 +613,19 @@ end
 local function CollectTarget(Target)
     local ScannerAPI=Scanner()
     if not ScannerAPI or type(ScannerAPI.CollectEgg)~="function" then return false end
+    if not Target or not Target.Object then return false end
+
     CurrentStage="Collecting"
-    local ok=ScannerAPI.CollectEgg(Target)
-    WaitForEggToDisappear(Target,6)
-    if ScannerAPI.MarkProcessed then ScannerAPI.MarkProcessed(Target.Object) end
-    return ok
+    local Started=ScannerAPI.CollectEgg(Target)
+    if not Started then
+        return false
+    end
+
+    local Collected=WaitForEggToDisappear(Target,6)
+    if Collected and ScannerAPI.MarkProcessed then
+        ScannerAPI.MarkProcessed(Target.Object)
+    end
+    return Collected
 end
 
 local function FarmCycle(Token)
@@ -583,8 +639,17 @@ local function FarmCycle(Token)
     CurrentTarget=Target
     if not TeleportToEgg(Target) then return end
     if Token~=FarmToken or not Running then return end
-    CollectTarget(Target)
+    local Collected=CollectTarget(Target)
     if Token~=FarmToken or not Running then return end
+
+    -- Se a coleta falhar, não marca o ovo como concluído.
+    -- O próximo ciclo poderá tentar novamente.
+    if not Collected then
+        CurrentStage="Retrying"
+        task.wait(0.25)
+        return
+    end
+
     TeleportToRanch()
     CurrentTarget=nil
     CurrentStage="Idle"
