@@ -95,7 +95,7 @@ end
 
 Context.Window = Window
 
-local MainTab = Window:Tab({Title="Main", Icon=Icons.Home})
+local MainTab = Window:Tab({Title="Main", Icon="home"})
 local PlayerTab = Window:Tab({Title="Player", Icon=Icons.Player})
 local AutoCompraTab = Window:Tab({Title="Auto Compra", Icon=Icons.Shop})
 local DiversosTab = Window:Tab({Title="Diversos", Icon=Icons.Settings})
@@ -105,7 +105,7 @@ Context.PlayerTab = PlayerTab
 Context.AutoCompraTab = AutoCompraTab
 Context.DiversosTab = DiversosTab
 
-MainTab:Section({Title="AUTO FARM"})
+MainTab:Section({Title="AUTO FARM", Icon=Icons.Egg})
 
 MainTab:Toggle({
     Title="Coleta Automática", Desc="Ativa a coleta automática dos ovos.",
@@ -123,11 +123,6 @@ MainTab:Toggle({
     end
 })
 
-MainTab:Slider({
-    Title="Velocidade da Coleta", Desc="Velocidade usada pelo sistema de coleta.",
-    Icon=Icons.Speed, Value={Min=1,Max=500,Default=math.clamp(tonumber(Estado.FarmSpeed) or 50,1,500)},
-    Callback=function(Value) Estado.FarmSpeed=math.clamp(tonumber(Value) or 50,1,500) end
-})
 
 MainTab:Dropdown({
     Title="Selecionar Ovos", Desc="Escolha quais ovos serão coletados.",
@@ -135,7 +130,7 @@ MainTab:Dropdown({
     Callback=function(Value) Estado.SelectedEggs=type(Value)=="table" and Value or {} end
 })
 
-MainTab:Section({Title="FILTRO DE RARIDADE"})
+MainTab:Section({Title="FILTRO DE RARIDADE", Icon=Icons.Filter})
 
 MainTab:Dropdown({
     Title="Selecionar Raridade", Desc="Filtra os ovos pela raridade.",
@@ -149,7 +144,7 @@ MainTab:Toggle({
     Callback=function(Value) Estado.PrioridadeSorte=Value==true end
 })
 
-MainTab:Section({Title="NAVEGAÇÃO"})
+MainTab:Section({Title="NAVEGAÇÃO", Icon=Icons.Navigation})
 
 MainTab:Button({
     Title="Ir para o Rancho", Desc="Teleporta até o seu rancho, sua base.", Icon=Icons.Map,
@@ -363,51 +358,61 @@ end
 
 local function IsSelectedEgg(EggName)
     local Selected=Context.State.SelectedEggs or {}
-    if #Selected==0 then return true end
+    local HasSelection=false
     local GameName=OvosMap[EggName] or EggName
-    for _,Value in pairs(Selected) do
-        if Value==EggName or Value==GameName then return true end
+    for Key,Value in pairs(Selected) do
+        if Value==true then
+            HasSelection=true
+            if Key==EggName or Key==GameName then return true end
+        elseif type(Value)=="string" then
+            HasSelection=true
+            if Value==EggName or Value==GameName then return true end
+        end
     end
-    return false
+    return not HasSelection
 end
 
 local function IsSelectedRarity(GameName)
     local Selected=Context.State.SelectedRarities or {}
-    if #Selected==0 then return true end
     local Rarity=Raridades[GameName]
     if not Rarity then return true end
-    for _,Value in pairs(Selected) do
-        if Value==Rarity then return true end
+    local HasSelection=false
+    for Key,Value in pairs(Selected) do
+        if Value==true then
+            HasSelection=true
+            if Key==Rarity then return true end
+        elseif type(Value)=="string" then
+            HasSelection=true
+            if Value==Rarity then return true end
+        end
     end
-    return false
+    return not HasSelection
 end
 
 local function ScanEggs()
     local Folder=Workspace:FindFirstChild("RenderedEggs")
     local Results={}
-    if not Folder then return Results end
-
-    for _,Egg in ipairs(Folder:GetChildren()) do
-        if IsValidEgg(Egg) then
-            local RawName=NormalizeName(Egg.Name)
-            if IsSelectedEgg(RawName) then
-                local GameName=OvosMap[RawName] or RawName
-                if IsSelectedRarity(GameName) then
-                    local Position=GetEggPosition(Egg)
-                    if Position then
-                        table.insert(Results,{
-                            Object=Egg,Name=RawName,GameName=GameName,
-                            Position=Position,Luck=LuckDosOvos[GameName] or 0,
-                            Rarity=Raridades[GameName]
-                        })
-                    end
-                end
-            end
+    if not Folder then
+        warn("[CORDEX V1] RenderedEggs não encontrado.")
+        return Results
+    end
+    local Seen={}
+    local function TryEgg(Egg)
+        if not Egg or Seen[Egg] or not IsValidEgg(Egg) then return end
+        Seen[Egg]=true
+        local RawName=NormalizeName(Egg.Name)
+        local GameName=OvosMap[RawName] or RawName
+        if not IsSelectedEgg(RawName) then return end
+        if not IsSelectedRarity(GameName) then return end
+        local Position=GetEggPosition(Egg)
+        if Position then
+            table.insert(Results,{Object=Egg,Name=RawName,GameName=GameName,Position=Position,Luck=LuckDosOvos[GameName] or 0,Rarity=Raridades[GameName]})
         end
     end
+    for _,Egg in ipairs(Folder:GetChildren()) do TryEgg(Egg) end
+    for _,Egg in ipairs(Folder:GetDescendants()) do TryEgg(Egg) end
     return Results
 end
-
 local function FindBestEgg()
     local Eggs=ScanEggs()
     local Root
